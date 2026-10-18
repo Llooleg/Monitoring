@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# pipeline state
+*.db
+*.db-shm
+*.db-wal
+demo/
+digest.md
