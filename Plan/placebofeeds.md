@@ -1,0 +1,13 @@
+The placebo feeds exist to measure how gullible your pipeline is. A control group only works if it goes through the same machinery as the real data. Then whatever the system "finds" in it is, by construction, a false positive, and you get an actual false-positive rate instead of a feeling.
+There are three kinds worth running:
+Synthetic noise. Random walks or Poisson counts tuned to match your real feeds' distribution and hour-of-week seasonality. This tests the statistical baseline alone: if it flags 5x more anomalies than its threshold implies, it's miscalibrated, and no LLM is even involved yet.
+Real but irrelevant data. Bakery counts, weather in a random city, edit rates on random Wikipedia articles, pizza orders from an office in Ohio. This tests the agent. Real data has real quirks (holidays, outages, weekends), and it gives the triage model something to narrate. If it decides the Ohio pizza spike is a leading indicator of layoffs, congratulations, you've built a pundit.
+Time-shifted copies of your real feeds. This is the best one and the cheapest. Take real ADS-B or job-posting history and shift it by a random offset of a few weeks. The distribution, autocorrelation, and weirdness are identical, but any link to real-world events is broken. You can generate hundreds of these from one feed and replay two years of history against them.
+def surrogate(series, rng, min_shift=14 * 24):
+    # hourly data: shift >= 2 weeks keeps seasonality, kills the event link
+    shift = rng.integers(min_shift, len(series) - min_shift)
+    return np.roll(series, shift)
+
+Two design rules matter more than the feeds themselves. First, blind the agent. Placebos go through the same collector interface and schema, with plausible neutral descriptions, and the is_placebo flag lives in a separate table that only the scorer can read. If the agent can see "PLACEBO_bakeries", you're testing its reading comprehension. Second, use the control group to set the bar. Track how often placebo anomalies get escalated, and how often the agent "corroborates" them with other sources. That second number is your chance-coincidence rate. With enough feeds, something always lines up with something else, and this is how the pipeline learns how much lining-up is free. A real signal class only gets to alert if it beats the placebo escalation rate by a clear margin.
+Watch for a few failure modes. If a placebo is obviously fake, the agent will learn to ignore it, which defeats the point. If it shares a hidden driver with a real feed (weather versus flight counts, say), it isn't a placebo. And rare events need volume to measure, which is why the time-shifted surrogates carry most of the weight, since real placebos would take years to give you a usable sample.
+
