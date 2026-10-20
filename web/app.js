@@ -119,22 +119,91 @@ const VIEWS = {
     },
   },
   anomalies: {
-    step: 5,
-    render(main) { stub(main, "Anomalies",
-      "sortable, filterable anomaly table with triage verdicts, linked into the ledger. " +
-      "Fed by <code>/api/anomalies</code>."); },
+    async render(main, showLoading, seq) {
+      if (showLoading) main.innerHTML = loadingCard();
+      const f = state.anomFilter || (state.anomFilter = { verdict: "", feed_id: "" });
+      const sort = state.anomSort || (state.anomSort = { key: "detected_at", dir: -1 });
+      let aj, fj;
+      try {
+        [aj, fj] = await Promise.all([
+          api(`/api/anomalies?limit=1000${f.verdict ? `&verdict=${f.verdict}` : ""}${f.feed_id ? `&feed_id=${f.feed_id}` : ""}`),
+          api("/api/feeds"),
+        ]);
+      } catch (e) {
+        if (seq === state.seq) main.innerHTML = errorCard(e.message);
+        return;
+      }
+      if (seq !== state.seq) return;
+      main.innerHTML = anomaliesHTML(aj, fj.feeds || [], f, sort);
+      $("#f-verdict", main).addEventListener("change", e => { f.verdict = e.target.value; setView("anomalies", false); });
+      $("#f-feed", main).addEventListener("change", e => { f.feed_id = e.target.value; setView("anomalies", false); });
+      $$("th.sortable", main).forEach(th => th.addEventListener("click", () => {
+        const k = th.dataset.key;
+        if (sort.key === k) sort.dir *= -1; else { sort.key = k; sort.dir = -1; }
+        setView("anomalies", false);
+      }));
+      $$(".plink", main).forEach(a => a.addEventListener("click", () => { state.ledgerFocus = +a.dataset.pid; }));
+    },
   },
   ledger: {
-    step: 5,
-    render(main) { stub(main, "Ledger",
-      "the prediction ledger: claims, probabilities, resolve windows, HIT/MISS chips, " +
-      "independent-origin counts. Fed by <code>/api/predictions</code>."); },
+    async render(main, showLoading, seq) {
+      if (showLoading) main.innerHTML = loadingCard();
+      const sort = state.ledgerSort || (state.ledgerSort = { key: "made_at", dir: -1 });
+      let pj;
+      try {
+        pj = await api("/api/predictions");
+      } catch (e) {
+        if (seq === state.seq) main.innerHTML = errorCard(e.message);
+        return;
+      }
+      if (seq !== state.seq) return;
+      main.innerHTML = ledgerHTML(pj.predictions || [], sort, Date.now() / 1000);
+      $$("th.sortable", main).forEach(th => th.addEventListener("click", () => {
+        const k = th.dataset.key;
+        if (sort.key === k) sort.dir *= -1; else { sort.key = k; sort.dir = -1; }
+        setView("ledger", false);
+      }));
+      $$(".exp", main).forEach(b => b.addEventListener("click", () => {
+        const row = b.closest("tr"), det = row.nextElementSibling;
+        det.hidden = !det.hidden;
+        b.textContent = det.hidden ? "+" : "\u2212";
+      }));
+      if (state.ledgerFocus) {
+        const tr = $(`.prow[data-pid="${state.ledgerFocus}"]`, main);
+        if (tr) {
+          tr.classList.add("hl");
+          const det = tr.nextElementSibling;
+          det.hidden = false;
+          tr.querySelector(".exp").textContent = "\u2212";
+          tr.scrollIntoView({ block: "center" });
+        }
+        state.ledgerFocus = null;
+      }
+    },
   },
   events: {
-    step: 5,
-    render(main) { stub(main, "Events",
-      "corroboration timeline around a chosen anomaly, origins grouped. " +
-      "Fed by <code>/api/events</code>."); },
+    async render(main, showLoading, seq) {
+      if (showLoading) main.innerHTML = loadingCard();
+      const range = state.eventsRange || (state.eventsRange = "14d");
+      const type = state.eventsType ?? (state.eventsType = "");
+      let ej;
+      try {
+        // anchor to the newest event in the store (replays), then window back
+        const until = state.eventsUntil || "";
+        const q = until ? `?since=${Math.floor(until - EVENT_RANGES[range] * 3600)}&until=${until}` : "";
+        ej = await api(`/api/events${q}`);
+        state.eventsUntil = ej.until;
+      } catch (e) {
+        if (seq === state.seq) main.innerHTML = errorCard(e.message);
+        return;
+      }
+      if (seq !== state.seq) return;
+      main.innerHTML = eventsHTML(ej, range, type);
+      $$(".rangebar button[data-range]", main).forEach(b =>
+        b.addEventListener("click", () => { state.eventsRange = b.dataset.range; setView("events", false); }));
+      $$(".typebar button[data-type]", main).forEach(b =>
+        b.addEventListener("click", () => { state.eventsType = b.dataset.type; setView("events", false); }));
+    },
   },
   digest: {
     step: 6,
@@ -388,8 +457,174 @@ function feedsViewHTML(feeds, range) {
     </div>`).join("")}`;
 }
 
+/* ------------------------------------------------------ shared helpers */
+
+function sortBy(arr, key, dir) {
+  return [...arr].sort((a, b) => {
+    const x = a[key], y = b[key];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;          // nulls sink regardless of direction
+    if (y == null) return -1;
+    return (x < y ? -1 : x > y ? 1 : 0) * dir;
+  });
+}
+
+function thSort(label, key, sort) {
+  const on = sort.key === key;
+  return `<th class="sortable${on ? " on" : ""}" data-key="${key}">${label}${on ? (sort.dir < 0 ? " &#9662;" : " &#9652;") : ""}</th>`;
+}
+
+function zClass(z) {
+  const a = Math.abs(z);
+  return a >= 8 ? "neg" : a >= 6 ? "warn" : "";
+}
+
+function verdictChip(v) {
+  return v ? `<span class="chip ${v}">${v}</span>`
+           : `<span class="chip shadow">untriaged</span>`;
+}
+
+function outcomeChip(p, nowS) {
+  if (p.outcome === "yes") return `<span class="chip hit">HIT</span>`;
+  if (p.outcome === "no") return `<span class="chip miss">MISS</span>`;
+  if (p.outcome === "void") return `<span class="chip shadow">VOID</span>`;
+  if (p.resolve_by < nowS) return `<span class="chip unexplained">OVERDUE</span>`;
+  return `<span class="chip open">OPEN</span>`;
+}
+
+const fmtShort = t => {
+  if (!t) return "—";
+  const d = new Date(t * 1000);
+  const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${M[d.getUTCMonth()]} ${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+};
+
+/* --------------------------------------------------- anomalies (step 5) */
+
+function anomaliesHTML(aj, feeds, filter, sort) {
+  const rows = sortBy(aj.anomalies || [], sort.key, sort.dir).map(a => `
+    <tr>
+      <td class="num">${fmtShort(a.observed_at)}<span class="dim"> · ${fmtAgo(a.observed_at)}</span></td>
+      <td>${esc(a.label)}</td>
+      <td class="num dim">${esc(a.signal_class)}</td>
+      <td class="num ${zClass(a.z)}">${a.z.toFixed(1)}</td>
+      <td>${verdictChip(a.verdict)}</td>
+      <td class="sum" title="${esc(a.summary || "")}">${esc(a.summary || "")}</td>
+      <td>${a.pred_id ? `<a href="#/ledger" class="plink" data-pid="${a.pred_id}">#${a.pred_id}</a>` : "<span class=\"dim\">—</span>"}</td>
+    </tr>`).join("");
+  const opt = (v, l, cur) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`;
+  return `
+  <div class="card">
+    <h2>Anomalies <span class="dim num">${fmtInt(aj.total)} total</span></h2>
+    <div class="filterbar">
+      <select id="f-verdict">${opt("", "all verdicts", filter.verdict)}${["call", "noise", "unexplained", "invalid"].map(v => opt(v, v, filter.verdict)).join("")}</select>
+      <select id="f-feed">${opt("", "all feeds", filter.feed_id)}${feeds.map(f => opt(String(f.feed_id), f.label, filter.feed_id)).join("")}</select>
+      ${aj.total > (aj.anomalies || []).length ? `<span class="dim">showing first ${fmtInt(aj.anomalies.length)} by detection time</span>` : ""}
+    </div>
+    <table class="table"><thead><tr>
+      ${thSort("observed", "observed_at", sort)}
+      <th>feed</th><th>class</th>
+      ${thSort("z", "z", sort)}
+      ${thSort("verdict", "verdict", sort)}
+      <th>triage summary</th><th>ledger</th>
+    </tr></thead><tbody>${rows || `<tr><td colspan="7" class="dim">nothing matches</td></tr>`}</tbody></table>
+  </div>`;
+}
+
+/* ------------------------------------------------------- ledger (step 5) */
+
+function ledgerHTML(preds, sort, nowS) {
+  const rows = sortBy(preds, sort.key, sort.dir).map(p => {
+    const winH = Math.round((p.resolve_by - p.made_at) / 3600);
+    return `
+    <tr class="prow" data-pid="${p.pred_id}">
+      <td class="num">#${p.pred_id}</td>
+      <td class="num">${fmtShort(p.made_at)}</td>
+      <td class="num dim">${esc(p.signal_class)}</td>
+      <td class="claim" title="${esc(p.claim)}">${esc(p.claim)}</td>
+      <td class="num">${pct(p.probability)}</td>
+      <td class="num dim">${winH}h</td>
+      <td class="num">${p.n_independent ?? "—"}</td>
+      <td>${outcomeChip(p, nowS)}</td>
+      <td>${p.alerted ? `<span title="alerted">\u{1F514}</span>` : ""}</td>
+      <td><button class="exp" aria-label="expand">+</button></td>
+    </tr>
+    <tr class="pdetail" hidden><td colspan="10">
+      <dl class="kv">
+        <dt>claim</dt><dd>${esc(p.claim)}</dd>
+        <dt>falsifier</dt><dd>${esc(p.falsifier)}</dd>
+        <dt>resolution rule</dt><dd><pre>${esc(JSON.stringify(p.resolution_rule, null, 1))}</pre></dd>
+        <dt>resolution</dt><dd>${p.outcome ? `${esc(p.outcome)} by ${esc(p.resolver || "?")} at ${fmtUTC(p.resolved_at)}${p.resolution_note ? ` — ${esc(p.resolution_note)}` : ""}` : `due ${fmtUTC(p.resolve_by)}`}</dd>
+        <dt>anomaly</dt><dd>${esc(p.anomaly_feed || "?")} · ${fmtUTC(p.anomaly_at)} · z=${p.z == null ? "—" : p.z.toFixed(1)}</dd>
+        <dt>model</dt><dd>${esc(p.model)} · prompt ${esc(p.prompt_version)}</dd>
+        <dt>independent origins</dt><dd>${p.n_independent ?? "—"} (recomputed by v_independent_support, not the model's claim)</dd>
+      </dl>
+    </td></tr>`;
+  }).join("");
+  return `
+  <div class="card">
+    <h2>Prediction ledger <span class="dim">immutable, one per anomaly, resolved by rule — never by the model</span></h2>
+    <table class="table"><thead><tr>
+      ${thSort("id", "pred_id", sort)}
+      ${thSort("made", "made_at", sort)}
+      <th>class</th><th>claim</th>
+      ${thSort("p", "probability", sort)}
+      <th>window</th>
+      ${thSort("origins", "n_independent", sort)}
+      ${thSort("outcome", "outcome", sort)}
+      <th></th><th></th>
+    </tr></thead><tbody>${rows || `<tr><td colspan="10" class="dim">the ledger is empty</td></tr>`}</tbody></table>
+  </div>`;
+}
+
+/* ------------------------------------------------------- events (step 5) */
+
+const EVENT_RANGES = { "24h": 24, "3d": 72, "7d": 168, "14d": 336 };
+
+function eventsHTML(ej, range, typeFilter) {
+  const evs = ej.events || [];
+  const types = [...new Set(evs.map(e => e.event_type))].sort();
+  const shown = typeFilter ? evs.filter(e => e.event_type === typeFilter) : evs;
+
+  // group by origin: N reposts of one thing are ONE line, like the mock judges it
+  const groups = new Map();
+  for (const e of shown) {
+    const k = e.origin_key || `~no-origin/${e.event_id}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  const ordered = [...groups.entries()].sort((a, b) => b[1][0].occurred_at - a[1][0].occurred_at);
+
+  const rbtn = (r, l) => `<button data-range="${r}" class="${r === range ? "on" : ""}">${l}</button>`;
+  const tbtn = t => `<button data-type="${t}" class="${typeFilter === t ? "on" : ""}">${t} (${evs.filter(e => e.event_type === t).length})</button>`;
+
+  const body = ordered.map(([origin, es]) => `
+    <div class="ogroup">
+      <div class="ohead"><b>${esc(String(origin).slice(0, 48))}</b> · ${es.length} event${es.length > 1 ? "s" : ""}
+        <span class="dim">${fmtShort(es[0].occurred_at)} → ${fmtShort(es[es.length - 1].occurred_at)} · 1 independent origin</span></div>
+      ${es.map(e => `
+        <div class="eitem">
+          <span class="et">${fmtShort(e.occurred_at)}</span>
+          <span class="tchip ${esc(e.event_type)}">${esc(e.event_type)}</span>
+          <span>${esc(e.title || "(untitled)")}${e.magnitude != null ? ` <span class="dim num">mag ${e.magnitude}</span>` : ""}</span>
+          <span class="dim">${esc(e.source)}</span>
+        </div>`).join("")}
+    </div>`).join("");
+
+  return `
+  <div class="card">
+    <h2>Events <span class="dim num">window ${fmtShort(ej.since)} → ${fmtShort(ej.until)}</span></h2>
+    <div class="filterbar">
+      <div class="rangebar">${rbtn("24h", "24h")}${rbtn("3d", "3d")}${rbtn("7d", "7d")}${rbtn("14d", "14d")}</div>
+      <div class="rangebar typebar"><button data-type="" class="${typeFilter ? "" : "on"}">all</button>${types.map(t => tbtn(t)).join("")}</div>
+    </div>
+    <p class="dim num">${fmtInt(shown.length)} events · ${fmtInt(ordered.length)} independent origins — repost storms collapse to one line</p>
+    ${body || `<p class="dim">no events in this window</p>`}
+  </div>`;
+}
+
 /* node smoke hook: render views without a DOM (see tests/ and README) */
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { overviewHTML, verdictBlock, freshnessTable, trackTable, alertsBlock,
-                     feedsViewHTML };
+                     feedsViewHTML, anomaliesHTML, ledgerHTML, eventsHTML, outcomeChip, sortBy };
 }
