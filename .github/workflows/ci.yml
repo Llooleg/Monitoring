@@ -1,0 +1,136 @@
+# CI/CD for the monitoring pipeline.
+#
+# CI:  stdlib-only Python 3.13, so no dependency install step -- just run the
+#      unit tests and the offline demo end-to-end on every push/PR.
+# CD:  on pushes to main, build the Docker image, smoke-test it (the offline
+#      demo one-shot from the Dockerfile docs), and publish it to GHCR:
+#      ghcr.io/llooleg/monitoring:{latest, sha-<commit>}. Deploy = pull that
+#      image where docker-compose.yml runs (see the commented job at the
+#      bottom for SSH-based deploys to your own host).
+#
+# No third-party packages are used (verify: grep -rhoE '^(import|from) ' --include='*.py' .),
+# so there is deliberately no pip/requirements step to cache.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  test:
+    name: Tests + offline demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Check SQLite >= 3.37 (schema.sql uses STRICT tables)
+        run: python -c "import sqlite3; v=sqlite3.sqlite_version_info; print('sqlite', sqlite3.sqlite_version); assert v >= (3, 37), v"
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests
+
+      - name: Offline demo (end-to-end smoke test, no network / no keys)
+        run: |
+          python demo.py --dir "$RUNNER_TEMP/demo"
+          test -f "$RUNNER_TEMP/demo/digest.md"
+          grep -q "DAILY DIGEST" "$RUNNER_TEMP/demo/digest.md"
+
+  docker:
+    name: Build, smoke-test, publish image
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR requires lowercase image names; this repo is "Monitoring".
+      - name: Lowercase image name
+        id: repo
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build + load locally so PRs (which don't push) can still be smoke-tested.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: monitoring:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Same one-shot the Dockerfile documents; exercises entrypoint.sh -> run.py.
+      - name: Smoke test image (offline demo one-shot)
+        run: docker run --rm monitoring:ci demo --dir /tmp/demo
+
+      - name: Docker meta (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.repo.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      - name: Login to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Second build is served entirely from the GHA cache, so this is fast.
+      - name: Publish image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Deploy to your own host once it exists. Needs these repo secrets:
+  #   DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY (private key), DEPLOY_PATH
+  # (path on the host containing a docker-compose.yml pointing at the GHCR image).
+  # deploy:
+  #   name: Deploy
+  #   needs: docker
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 10
+  #   environment: production
+  #   steps:
+  #     - name: Pull and restart
+  #       uses: appleboy/ssh-action@v1
+  #       with:
+  #         host: ${{ secrets.DEPLOY_HOST }}
+  #         username: ${{ secrets.DEPLOY_USER }}
+  #         key: ${{ secrets.DEPLOY_SSH_KEY }}
+  #         script: |
+  #           cd "$DEPLOY_PATH"
+  #           docker compose pull
+  #           docker compose up -d --remove-orphans
+  #           docker image prune -f
