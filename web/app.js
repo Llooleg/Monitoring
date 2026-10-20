@@ -86,10 +86,37 @@ const VIEWS = {
     },
   },
   feeds: {
-    step: 4,
-    render(main) { stub(main, "Feeds",
-      "per-feed canvas charts: values, hour-of-week MAD band, anomaly dots, coverage strip. " +
-      "Fed by <code>/api/feeds</code> + <code>/api/feed/N/series</code>."); },
+    async render(main, showLoading, seq) {
+      if (showLoading) main.innerHTML = loadingCard();
+      let fl;
+      try {
+        fl = await api("/api/feeds");
+      } catch (e) {
+        if (seq === state.seq) main.innerHTML = errorCard(e.message);
+        return;
+      }
+      if (seq !== state.seq) return;
+      const feeds = fl.feeds || [];
+      const range = state.feedsRange || "14d";
+      main.innerHTML = feedsViewHTML(feeds, range);
+      $$(".rangebar button", main).forEach(b =>
+        b.addEventListener("click", () => {
+          state.feedsRange = b.dataset.range;
+          setView("feeds", true);
+        }));
+      for (const f of feeds) {
+        const el = $(`#feed-${f.feed_id} .chart-body`, main);
+        if (!el) continue;
+        if (!f.n_obs) { el.innerHTML = `<p class="dim">no observations yet</p>`; continue; }
+        try {
+          const s = await api(`/api/feed/${f.feed_id}/series?range=${range}`);
+          if (seq !== state.seq) return;
+          new FeedChart(el, s);
+        } catch (e) {
+          el.innerHTML = `<p class="dim">series unavailable: ${esc(e.message)}</p>`;
+        }
+      }
+    },
   },
   anomalies: {
     step: 5,
@@ -337,7 +364,32 @@ if (typeof document !== "undefined") {
   schedule();
 }
 
+/* ---------------------------------------------------------- feeds (step 4) */
+
+function feedsViewHTML(feeds, range) {
+  const btn = (r, label) =>
+    `<button data-range="${r}" class="${r === range ? "on" : ""}">${label}</button>`;
+  return `
+  <div class="card rangecard">
+    <h2>Feeds</h2>
+    <div class="rangebar">${btn("3d", "3 days")}${btn("14d", "14 days")}${btn("12w", "12 weeks")}</div>
+    <span class="dim">values at first-reported vintage · band = hour-of-week median ±3·MAD (trailing 12w) · shaded columns = weekend</span>
+  </div>
+  ${feeds.map(f => `
+    <div class="card feedcard" id="feed-${f.feed_id}">
+      <div class="fhead">
+        <div><span class="flabel">${esc(f.label)}</span>
+          <span class="chip shadow num">${esc(f.signal_class)}</span>
+          ${f.n_untriaged ? `<span class="chip unexplained">${f.n_untriaged} untriaged</span>` : ""}
+        </div>
+        <div class="dim num">${fmtInt(f.n_obs)} obs · fired ${f.fired_365d ?? "—"}/365d · ${esc(f.source || "")}</div>
+      </div>
+      <div class="chart-body"></div>
+    </div>`).join("")}`;
+}
+
 /* node smoke hook: render views without a DOM (see tests/ and README) */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { overviewHTML, verdictBlock, freshnessTable, trackTable, alertsBlock };
+  module.exports = { overviewHTML, verdictBlock, freshnessTable, trackTable, alertsBlock,
+                     feedsViewHTML };
 }

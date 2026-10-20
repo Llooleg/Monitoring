@@ -275,6 +275,58 @@ main {
 .pos { color: var(--green); }
 .neg { color: var(--red); }
 
+/* ------------------------------------------------------------ feeds view */
+
+.rangebar { display: inline-flex; gap: .3rem; margin-right: 1rem; }
+.rangebar button {
+  font: inherit; font-size: .8rem;
+  color: var(--muted); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: .15rem .6rem; cursor: pointer;
+}
+.rangebar button:hover { color: var(--text); }
+.rangebar button.on {
+  color: var(--text); border-color: var(--accent);
+  background: rgba(92,157,214,.12);
+}
+
+.rangecard { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.rangecard h2 { margin: 0 1rem 0 0; }
+.rangecard .dim { font-size: .78rem; }
+
+.feedcard .fhead {
+  display: flex; justify-content: space-between;
+  align-items: baseline; flex-wrap: wrap; gap: .3rem 1rem;
+  margin-bottom: .6rem;
+}
+.feedcard .flabel { font-weight: 600; margin-right: .5rem; }
+
+.chart-wrap { position: relative; }
+.chart-wrap canvas { display: block; width: 100%; }
+.chart-cov { margin-top: 2px; }
+
+.tip {
+  display: none;
+  position: absolute; top: 6px;
+  background: rgba(11, 14, 20, .96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .45rem .6rem;
+  font-size: .78rem;
+  pointer-events: none;
+  z-index: 5;
+  box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  max-width: 340px;
+}
+.tip table td { padding: 0 .5rem 0 0; }
+.tip td:first-child { color: var(--dim); }
+.tip .tipsum {
+  margin-top: .35rem; padding-top: .35rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  max-height: 5.5em; overflow: hidden;
+}
+
 @media (max-width: 720px) {
   main { padding: .8rem; }
   .top { padding: .55rem .8rem; }

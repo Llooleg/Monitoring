@@ -247,7 +247,8 @@ class TestWebServer(unittest.TestCase):
         for marker in ('id="main"', 'id="tabs"', "app.js", "style.css", "api/pulse"):
             self.assertIn(marker, body, f"shell must reference {marker!r}")
         for path, ctype in (("/style.css", "text/css"),
-                            ("/app.js", "application/javascript")):
+                            ("/app.js", "application/javascript"),
+                            ("/charts.js", "application/javascript")):
             with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}") as r:
                 self.assertEqual(r.status, 200)
                 self.assertIn(ctype, r.headers["Content-Type"])

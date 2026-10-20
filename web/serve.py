@@ -400,7 +400,7 @@ STATIC_FILES = {
     "/index.html": "index.html",
     "/style.css": "style.css",
     "/app.js": "app.js",
-    "/charts.js": "charts.js",     # lands in step 4; 404 until then
+    "/charts.js": "charts.js",
 }
 
 
