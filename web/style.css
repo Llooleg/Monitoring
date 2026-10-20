@@ -226,6 +226,55 @@ main {
   font-size: .75rem;
 }
 
+/* ------------------------------------------------------------- overview */
+
+.kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+.stat .big {
+  font-size: 1.75rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.stat .sub { font-size: .78rem; }
+
+.grid.two { grid-template-columns: 3fr 2fr; }
+@media (max-width: 900px) { .grid.two { grid-template-columns: 1fr; } }
+
+/* verdict mix bar */
+.vbar {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #1a212e;
+  margin: .3rem 0 .9rem;
+}
+.vbar .seg { height: 100%; }
+.vbar .seg.call        { background: var(--green); }
+.vbar .seg.noise       { background: #4a5568; }
+.vbar .seg.unexplained { background: var(--amber); }
+.vbar .seg.invalid     { background: var(--red); }
+
+.legend .lrow {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .22rem 0;
+  font-size: .88rem;
+}
+.legend .sw {
+  width: 10px; height: 10px; border-radius: 2px;
+  display: inline-block;
+}
+.legend .sw.call        { background: var(--green); }
+.legend .sw.noise       { background: #4a5568; }
+.legend .sw.unexplained { background: var(--amber); }
+.legend .sw.invalid     { background: var(--red); }
+
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+
 @media (max-width: 720px) {
   main { padding: .8rem; }
   .top { padding: .55rem .8rem; }

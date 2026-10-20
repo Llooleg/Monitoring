@@ -167,7 +167,7 @@ def q_overview(store: Store) -> dict:
             GROUP BY p.signal_class ORDER BY p.signal_class"""
         if "signal_status" in t:
             track = rows(con, track_sql.format(
-                status_cols=", s.status, s.skill, s.ci_lo, s.ci_hi",
+                status_cols=", s.status, s.skill, s.d_mean, s.ci_lo, s.ci_hi, s.brier, s.brier_ref",
                 status_join="LEFT JOIN signal_status s ON s.signal_class = p.signal_class"))
         else:
             track = rows(con, track_sql.format(status_cols="", status_join=""))
