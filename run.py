@@ -117,7 +117,10 @@ def cmd_digest(args):
 
 
 def cmd_demo(args):
-    r = subprocess.run([sys.executable, str(ROOT / "demo.py")] + sys.argv[2:])
+    argv = [sys.executable, str(ROOT / "demo.py"), "--dir", args.dir]
+    if args.keep:
+        argv.append("--keep")
+    r = subprocess.run(argv)
     sys.exit(r.returncode)
 
 
@@ -159,7 +162,10 @@ def main():
     p.add_argument("--out")
     p.set_defaults(fn=cmd_digest)
 
-    sub.add_parser("demo").set_defaults(fn=cmd_demo)
+    p = sub.add_parser("demo")
+    p.add_argument("--dir", default="demo", help="where the demo databases go")
+    p.add_argument("--keep", action="store_true", help="keep an existing demo dir")
+    p.set_defaults(fn=cmd_demo)
 
     args = ap.parse_args()
     args.fn(args)

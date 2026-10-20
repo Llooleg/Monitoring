@@ -1,4 +1,5 @@
 """End-to-end test: the same pipeline as demo.py, asserted, in-process."""
+import datetime as dt
 import json
 import os
 import sqlite3
@@ -19,6 +20,14 @@ from collectors import synthetic  # noqa: E402
 
 HOUR = 3600
 
+# build_world anchors the world to wall clock when `end` is omitted, and its
+# weekday layout rotates with today (12 weeks is a whole number of weeks).
+# The mock agent's calendar check dismisses weekend anomalies, so with
+# seed=99 the three corroborated spikes land on weekdays only when the world
+# ends Thu-Sun -- the suite would fail every Mon/Tue/Wed. Anchor to a fixed
+# Thursday, as build_world's docstring prescribes for tests.
+WORLD_END = int(dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc).timestamp())
+
 
 class TestEndToEnd(unittest.TestCase):
     @classmethod
@@ -35,7 +44,7 @@ class TestEndToEnd(unittest.TestCase):
 
         con = sqlite3.connect(cls.events)
         con.row_factory = sqlite3.Row
-        cls.ground = synthetic.build_world(con, seed=99, weeks=12)
+        cls.ground = synthetic.build_world(con, seed=99, weeks=12, end=WORLD_END)
         con.close()
         import placebo
         import random

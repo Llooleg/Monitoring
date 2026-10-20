@@ -1,0 +1,26 @@
+# Template for running the monitoring pipeline as a service.
+#   docker compose up -d --build
+#
+# Works offline-ish out of the box (TRIAGE_LLM=mock; collectors still need
+# network). For real LLM triage set TRIAGE_LLM=anthropic (or openai) and pass
+# the matching API key via your environment or a .env file next to this one:
+#   ANTHROPIC_API_KEY=sk-...
+services:
+  monitoring:
+    build: .
+    image: monitoring:latest
+    restart: unless-stopped
+    environment:
+      MON_USER_AGENT: "your-name your-contact@example.com"   # EDIT ME: EDGAR etiquette
+      TRIAGE_LLM: mock                 # mock | anthropic | openai
+      TZ: UTC
+      TICK_SECONDS: "900"              # collect/baseline/triage cadence
+      # Scope (defaults shown; see README "Environment")
+      # BGP_ASN: "13335,15169"
+      # EDGAR_CIKS: "0000320193,0000789019"
+      # ADSB_QUERIES: "Europe:https://api.adsb.lol/v2/lat/52.5/13.4/250"
+    volumes:
+      - monitoring-data:/data          # events.db, truth.db, digest.md live here
+
+volumes:
+  monitoring-data:

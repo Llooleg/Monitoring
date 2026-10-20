@@ -1,0 +1,16 @@
+# Keep the image to the runtime app. Plan/ and SQLSchema/ MUST ship:
+# triage.py reads Plan/triageprompt.md live, and db.py reads the .sql schemas.
+.git
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+__pycache__/
+**/__pycache__/
+*.pyc
+.DS_Store
+**/.DS_Store
+tests/
+demo/
+*.db
+digest.md

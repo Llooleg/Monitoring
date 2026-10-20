@@ -1,14 +1,18 @@
 """Validator, independence and blinding tests for triage.py."""
 import datetime as dt
 import json
+import os
 import sqlite3
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "MLanalysis"))
+import db as dbmod  # noqa: E402
 import triage  # noqa: E402
 import scorer  # noqa: E402
 
@@ -222,6 +226,63 @@ class TestIndependenceAndGate(unittest.TestCase):
             T.parse_json = orig
         n = con.execute("SELECT COUNT(*) FROM prompt_miscounts").fetchone()[0]
         self.assertGreaterEqual(n, 1, "overcounted n_independent must be logged")
+
+
+class TestRetriage(unittest.TestCase):
+    """The ledger is immutable and one-prediction-per-anomaly."""
+
+    def test_retriage_keeps_one_prediction(self):
+        con = mini_db()
+        dbmod.ensure_one_prediction_per_anomaly(con)
+        client = type("M", (), {"name": "mock"})()
+        prompt, version = triage.load_prompt()
+        first = triage.triage_anomaly(con, client, 7, prompt, version)
+        self.assertEqual(first["verdict"], "call")
+        triage.triage_anomaly(con, client, 7, prompt, version)  # re-triage (rerun/overlap)
+        n = con.execute("SELECT COUNT(*) FROM predictions WHERE anomaly_id = 7").fetchone()[0]
+        self.assertEqual(n, 1, "re-triage must not duplicate the ledger")
+
+    def test_unique_index_blocks_duplicates(self):
+        con = mini_db()
+        dbmod.ensure_one_prediction_per_anomaly(con)
+        con.execute("INSERT INTO predictions (pred_id,anomaly_id,signal_class,made_at,claim,"
+                    "probability,resolve_by,falsifier,model,prompt_version) "
+                    "VALUES (1,7,'test.class',?,'c',0.5,?,'f','t','v')", (T0, T0 + 10**6))
+        with self.assertRaises(sqlite3.IntegrityError):
+            con.execute("INSERT INTO predictions (pred_id,anomaly_id,signal_class,made_at,claim,"
+                        "probability,resolve_by,falsifier,model,prompt_version) "
+                        "VALUES (2,7,'test.class',?,'c',0.5,?,'f','t','v')", (T0, T0 + 10**6))
+
+    def test_selection_respects_fake_now(self):
+        # anomaly selection must honor MON_FAKE_NOW, not wall clock, or replays
+        # of future-dated data silently find nothing to triage
+        with tempfile.TemporaryDirectory() as td:
+            db = str(Path(td) / "e.db")
+            con = sqlite3.connect(db)
+            con.row_factory = sqlite3.Row
+            con.executescript((ROOT / "SQLSchema" / "schema.sql").read_text())
+            con.executescript(scorer.DDL)
+            con.executescript(triage.DDL)
+            con.execute("INSERT INTO sources (source_id,name,kind,independence_group) "
+                        "VALUES (1,'s1','web','g1')")
+            con.execute("INSERT INTO feeds (feed_id,source_id,metric,cadence_s,label,signal_class) "
+                        "VALUES (1,1,'m',3600,'feed one','test.class')")
+            future = int(time.time()) + 10 * 86400
+            con.execute("INSERT INTO anomalies (anomaly_id,feed_id,observed_at,detected_at,score,method) "
+                        "VALUES (7,1,?,?,8.0,'median_mad_v1')", (future, future))
+            con.commit()
+            con.close()
+            old = os.environ.get("MON_FAKE_NOW")
+            os.environ["MON_FAKE_NOW"] = str(future + HOUR)
+            try:
+                triage.main([db, "--llm", "mock", "--limit", "5"])
+            finally:
+                if old is None:
+                    os.environ.pop("MON_FAKE_NOW", None)
+                else:
+                    os.environ["MON_FAKE_NOW"] = old
+            n = sqlite3.connect(db).execute("SELECT COUNT(*) FROM triage_runs").fetchone()[0]
+            self.assertEqual(n, 1, "selection must use dbmod.now(), not strftime('now')")
 
 
 class TestPrompt(unittest.TestCase):

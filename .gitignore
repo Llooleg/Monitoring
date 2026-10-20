@@ -225,3 +225,6 @@ __marimo__/
 *.db-wal
 demo/
 digest.md
+
+# macOS
+.DS_Store

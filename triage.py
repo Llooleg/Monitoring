@@ -26,6 +26,8 @@ import hashlib
 import json
 import sqlite3
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -550,28 +552,42 @@ def triage_anomaly(con: sqlite3.Connection, client, anomaly_id: int, prompt: str
 
     pred_id = None
     if verdict == "call":
-        pred = out["prediction"]
-        p = float(pred["probability"])
-        t_rb = int(dt.datetime.fromisoformat(pred["resolve_by"].replace("Z", "+00:00")).timestamp())
-        n_ind = computed_independence(con, pred.get("evidence"))
-        alerted = 1 if scorer.may_alert(con, pred["signal_class"], n_ind, p) else 0
-        cur = con.execute(
-            "INSERT INTO predictions (anomaly_id, signal_class, made_at, claim, probability, "
-            "resolve_by, falsifier, resolution_rule, model, prompt_version, alerted) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (anomaly_id, pred["signal_class"], now, pred["claim"], p, t_rb, pred["falsifier"],
-             json.dumps(pred.get("resolution_rule")), client.name, version, alerted))
-        pred_id = cur.lastrowid
-        for e in pred.get("evidence", []):
-            con.execute("INSERT INTO prediction_evidence (pred_id, event_id, anomaly_id, role) "
-                        "VALUES (?,?,?,?)",
-                        (pred_id, e.get("event_id"), e.get("anomaly_id"), e.get("role", "supports")))
-        # cross-check the claimed count against the view; code, not trust
-        v = con.execute("SELECT n_independent FROM v_independent_support WHERE pred_id = ?",
-                        (pred_id,)).fetchone()
-        n_view = v["n_independent"] if v else 0
-        if (out.get("n_independent") or 0) > n_view:
-            con.execute("INSERT INTO prompt_miscounts (prompt_version, anomaly_id, claimed, computed, at) "
-                        "VALUES (?,?,?,?,?)", (version, anomaly_id, out.get("n_independent"), n_view, now))
+        if con.execute("SELECT 1 FROM predictions WHERE anomaly_id = ?", (anomaly_id,)).fetchone():
+            # the ledger is immutable and holds ONE prediction per anomaly: a
+            # re-triage (or an overlapping cron run) keeps the original call
+            print(f"anomaly {anomaly_id}: re-triaged into a call; keeping the original "
+                  f"prediction (ledger is append-only)", file=sys.stderr)
+        else:
+            pred = out["prediction"]
+            p = float(pred["probability"])
+            t_rb = int(dt.datetime.fromisoformat(pred["resolve_by"].replace("Z", "+00:00")).timestamp())
+            n_ind = computed_independence(con, pred.get("evidence"))
+            alerted = 1 if scorer.may_alert(con, pred["signal_class"], n_ind, p) else 0
+            try:
+                cur = con.execute(
+                    "INSERT INTO predictions (anomaly_id, signal_class, made_at, claim, probability, "
+                    "resolve_by, falsifier, resolution_rule, model, prompt_version, alerted) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (anomaly_id, pred["signal_class"], now, pred["claim"], p, t_rb, pred["falsifier"],
+                     json.dumps(pred.get("resolution_rule")), client.name, version, alerted))
+            except sqlite3.IntegrityError:
+                # lost a race with a concurrent triage process on the unique index
+                pred_id = None
+                print(f"anomaly {anomaly_id}: a concurrent triage logged this prediction first; "
+                      f"keeping theirs", file=sys.stderr)
+            else:
+                pred_id = cur.lastrowid
+                for e in pred.get("evidence", []):
+                    con.execute("INSERT INTO prediction_evidence (pred_id, event_id, anomaly_id, role) "
+                                "VALUES (?,?,?,?)",
+                                (pred_id, e.get("event_id"), e.get("anomaly_id"), e.get("role", "supports")))
+            if pred_id:
+                # cross-check the claimed count against the view; code, not trust
+                v = con.execute("SELECT n_independent FROM v_independent_support WHERE pred_id = ?",
+                                (pred_id,)).fetchone()
+                n_view = v["n_independent"] if v else 0
+                if (out.get("n_independent") or 0) > n_view:
+                    con.execute("INSERT INTO prompt_miscounts (prompt_version, anomaly_id, claimed, computed, at) "
+                                "VALUES (?,?,?,?,?)", (version, anomaly_id, out.get("n_independent"), n_view, now))
     con.commit()
     return out
 
@@ -591,15 +607,17 @@ def main(argv=None):
     con.execute("PRAGMA foreign_keys = ON")
     con.executescript(DDL)
     con.executescript(scorer.DDL)  # may_alert reads signal_status
+    dbmod.ensure_one_prediction_per_anomaly(con)  # unique index; tolerant of old dupes
     prompt, version = load_prompt()
 
     if args.anomaly:
         ids = [args.anomaly]
     else:
+        # dbmod.now() honors MON_FAKE_NOW; wall clock here would break replays
         ids = [r["anomaly_id"] for r in con.execute(
             "SELECT a.anomaly_id FROM anomalies a LEFT JOIN triage_runs t USING (anomaly_id) "
-            "WHERE t.anomaly_id IS NULL AND a.detected_at <= CAST(strftime('%s','now') AS INTEGER) "
-            "ORDER BY a.detected_at LIMIT ?", (args.limit,))]
+            "WHERE t.anomaly_id IS NULL AND a.detected_at <= ? "
+            "ORDER BY a.detected_at LIMIT ?", (dbmod.now(), args.limit))]
     if not ids:
         print("nothing pending triage")
         return

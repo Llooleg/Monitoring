@@ -54,10 +54,18 @@ python3 run.py digest --out digest.md
 A cron wiring and the external-heartbeat rule (a missing digest means
 something broke) are in `run.py`'s docstring.
 
+Docker: `docker compose up -d --build` (see `docker-compose.yml`). Data lives
+in the `monitoring-data` volume (`/data/events.db`, `/data/truth.db`), the
+digest at `/data/digest.md`, and the container healthcheck fails if the digest
+goes stale. One-shots work too:
+`docker run --rm monitoring demo --dir /data/demo`.
+
 ## Invariants worth keeping
 
 - **Append-only.** `observations`, `events`, `predictions`, `resolutions` have
   UPDATE/DELETE triggers. Corrections are new rows; the ledger is not a diary.
+  And one prediction per anomaly: a unique index plus an insertion guard mean
+  a re-triage (or overlapping runs) keeps the original call, never a duplicate.
 - **No lookahead.** Baselines see only rows ingested before the target row,
   at first-reported vintage (`revision = 0`). Triage tools cut off at the
   anomaly's `detected_at`. Scoring reference uses only outcomes already

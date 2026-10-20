@@ -34,7 +34,10 @@ def collect(con: sqlite3.Connection, asns: list[str] | None = None) -> None:
         n_new = 0
         for row in data.get("updates", []):
             start = dt.datetime.fromisoformat(row["starttime"])
-            start = start.astimezone(dt.timezone.utc)
+            if start.tzinfo is None:
+                # RIPEstat timestamps are naive UTC; astimezone() would read
+                # them as LOCAL time and shift buckets by the host tz offset
+                start = start.replace(tzinfo=dt.timezone.utc)
             observed_at = int(start.timestamp()) + period  # bucket applies at its end
             ann = row.get("announcements") or 0
             wd = row.get("withdrawals") or 0

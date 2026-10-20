@@ -185,11 +185,13 @@ JOIN resolutions r USING (pred_id)
 WHERE r.outcome <> 'void'
 GROUP BY p.signal_class;
 
--- "G550s circling fires 40 times a year" lives here.
+-- "G550s circling fires 40 times a year" lives here. The window anchors to
+-- the newest detection in the store, not wall clock: SQL cannot see
+-- MON_FAKE_NOW, so replays must not silently get different numbers.
 CREATE VIEW IF NOT EXISTS v_firing_rate AS
 SELECT f.feed_id, f.label, f.signal_class, COUNT(a.anomaly_id) AS fired_365d
 FROM feeds f
 LEFT JOIN anomalies a
   ON a.feed_id = f.feed_id
- AND a.detected_at > CAST(strftime('%s', 'now') AS INTEGER) - 365 * 86400
+ AND a.detected_at > (SELECT MAX(detected_at) FROM anomalies) - 365 * 86400
 GROUP BY f.feed_id;
