@@ -204,9 +204,31 @@ class TestWebServer(unittest.TestCase):
         # traversal stays inside web/
         code, _ = http_get(self.port, "/../serve.py")
         self.assertIn(code, (403, 404))
-        # root serves a placeholder until step 2 lands the frontend
+
+    def test_head_requests(self):
+        # curl -I / proxies: same headers, no body, no server-side traceback
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/", method="HEAD")
+        with urllib.request.urlopen(req) as r:
+            self.assertEqual(r.status, 200)
+            self.assertEqual(len(r.read()), 0)
+            self.assertIn("text/html", r.headers["Content-Type"])
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/pulse", method="HEAD")
+        with urllib.request.urlopen(req) as r:
+            self.assertEqual(r.status, 200)
+            self.assertEqual(len(r.read()), 0)
+
+    def test_static_shell_served(self):
         code, body = http_get(self.port, "/")
         self.assertEqual(code, 200)
+        self.assertIsInstance(body, str)
+        for marker in ('id="main"', 'id="tabs"', "app.js", "style.css", "api/pulse"):
+            self.assertIn(marker, body, f"shell must reference {marker!r}")
+        for path, ctype in (("/style.css", "text/css"),
+                            ("/app.js", "application/javascript")):
+            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}") as r:
+                self.assertEqual(r.status, 200)
+                self.assertIn(ctype, r.headers["Content-Type"])
+                self.assertGreater(len(r.read()), 100)
 
 
 def os_env_set(key, value):
