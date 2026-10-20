@@ -391,6 +391,19 @@ ROUTES = [
 ]
 
 
+# Static serving: the frontend is a fixed set of flat files in web/. The
+# request path is only ever a DICTIONARY KEY -- it never enters a path
+# expression -- so there is nothing to traverse and nothing to decode
+# (CodeQL: uncontrolled data used in path expression). New files opt in here.
+STATIC_FILES = {
+    "/": "index.html",
+    "/index.html": "index.html",
+    "/style.css": "style.css",
+    "/app.js": "app.js",
+    "/charts.js": "charts.js",     # lands in step 4; 404 until then
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "monitoring-dashboard/1.0"
     store: Store = None                                   # set by make_server
@@ -430,20 +443,15 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": f"no such endpoint: {path}"})
 
     def _static(self, path):
-        if path in ("/", "/index.html"):
-            fp = ROOT / "index.html"
-            if not fp.exists():
-                return self._text(200, "dashboard API is up; frontend lands in step 2\n"
-                                         "try /api/pulse /api/overview /api/feeds")
-        else:
-            rel = path.lstrip("/")
-            if not rel or ".." in rel.split("/"):
-                return self._json(404, {"error": "not found"})
-            fp = (ROOT / rel).resolve()
-            if not str(fp).startswith(str(ROOT.resolve())) or not fp.is_file():
-                return self._json(404, {"error": "not found"})
-        body = fp.read_bytes()
-        self._send(200, MIME.get(fp.suffix, "application/octet-stream"), body)
+        name = STATIC_FILES.get(path)
+        if name is None:
+            return self._json(404, {"error": "not found"})
+        fp = ROOT / name
+        if not fp.is_file():
+            if name == "index.html":
+                return self._text(200, "dashboard API is up; try /api/pulse /api/overview /api/feeds")
+            return self._json(404, {"error": f"{name} is not built yet"})
+        self._send(200, MIME.get(fp.suffix, "application/octet-stream"), fp.read_bytes())
 
     _head = False
 

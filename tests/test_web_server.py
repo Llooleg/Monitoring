@@ -49,6 +49,20 @@ def http_get(port, path):
         return code, body
 
 
+def raw_get(port, path):
+    """GET with the path sent verbatim (urllib normalizes //x and friends,
+    which would defeat the point of hostile-path tests)."""
+    import http.client
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c.putrequest("GET", path)
+    c.putheader("Host", f"127.0.0.1:{port}")
+    c.endheaders()
+    r = c.getresponse()
+    body = r.read()
+    c.close()
+    return r.status, body
+
+
 class TestWebServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -201,9 +215,18 @@ class TestWebServer(unittest.TestCase):
         code, j = http_get(self.port, "/api/nope")
         self.assertEqual(code, 404)
         self.assertIn("error", j)
-        # traversal stays inside web/
-        code, _ = http_get(self.port, "/../serve.py")
-        self.assertIn(code, (403, 404))
+        # traversal in every spelling must die at the allowlist lookup:
+        # the request path is a dict key, never a path expression.
+        # Sent raw -- urllib would normalize some of these client-side.
+        # ("//x" vectors are absent: the stdlib itself collapses leading "//"
+        # before handler code runs -- CPython gh-87389.)
+        for evil in ("/../serve.py", "/..%2fserve.py", "/%2e%2e/serve.py",
+                     "/../../etc/passwd", "/vendor/sql-wasm.js", "/web/serve.py",
+                     "/index.html/../../../db.py", "/style.css/..", "/.",
+                     "/C:/windows/win.ini"):
+            code, body = raw_get(self.port, evil)
+            self.assertEqual(code, 404, f"{evil!r} must not be served")
+            self.assertIn(b"error", body)
 
     def test_head_requests(self):
         # curl -I / proxies: same headers, no body, no server-side traceback
