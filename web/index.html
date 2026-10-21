@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>monitoring &middot; dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="name">monitoring</span><span class="sub">dashboard</span>
+    </div>
+    <div class="status" id="status" aria-live="polite">
+      <span class="muted">connecting&hellip;</span>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="views">
+    <a href="#/overview"  data-view="overview">Overview</a>
+    <a href="#/feeds"     data-view="feeds">Feeds</a>
+    <a href="#/anomalies" data-view="anomalies">Anomalies</a>
+    <a href="#/ledger"    data-view="ledger">Ledger</a>
+    <a href="#/events"    data-view="events">Events</a>
+    <a href="#/digest"    data-view="digest">Digest</a>
+  </nav>
+
+  <main id="main">
+    <div class="card"><p class="muted">loading&hellip;</p></div>
+  </main>
+
+  <footer class="foot">
+    <span>read-only &middot; polls <code>/api/pulse</code> every 10s &middot; served by <code>web/serve.py</code></span>
+  </footer>
+
+  <noscript><div class="banner err">This dashboard needs JavaScript.</div></noscript>
+  <script src="charts.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
