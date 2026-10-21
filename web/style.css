@@ -430,6 +430,63 @@ tr.hl td { animation: rowhl 3s ease-out; }
 .tchip.blog_post,
 .tchip.social_post { color: var(--muted); background: rgba(138,147,166,.1); }
 
+/* -------------------------------------------------------- digest view */
+
+.banner.ok {
+  background: rgba(70, 178, 107, .1);
+  border: 1px solid rgba(70, 178, 107, .35);
+  color: #9fd8b3;
+}
+
+.dtitle {
+  font-size: 1.02rem;
+  font-weight: 650;
+  margin-bottom: .35rem;
+}
+
+.dsec {
+  margin: 1.1rem 0 .35rem;
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: .2rem;
+}
+.dsec.sec-ok   { color: var(--green);  border-bottom-color: rgba(70,178,107,.35); }
+.dsec.sec-warn { color: var(--amber);  border-bottom-color: rgba(217,161,61,.35); }
+.dsec.sec-info { color: var(--accent); border-bottom-color: rgba(92,157,214,.35); }
+
+.dbullet {
+  margin: .3rem 0;
+  padding-left: 1.15rem;
+  text-indent: -1.15rem;
+  font-size: .92rem;
+}
+.dbullet::before {
+  content: "\2022";
+  color: var(--accent);
+  margin-right: .5rem;
+}
+
+.dtable {
+  font-family: var(--mono);
+  font-size: .82rem;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: .5rem .7rem;
+  margin: .4rem 0 .8rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.dfoot  { color: var(--muted); font-size: .85rem; margin-top: .35rem; }
+.dline  { margin: .3rem 0; font-size: .92rem; }
+.dplacebo { color: var(--muted); font-size: .85rem; }
+.dplacebo.warn-line { color: var(--amber); }
+
 @media (max-width: 720px) {
   main { padding: .8rem; }
   .top { padding: .55rem .8rem; }

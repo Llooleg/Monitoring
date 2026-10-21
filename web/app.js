@@ -67,9 +67,8 @@ const state = {
 
 /* ------------------------------------------------------------- the views */
 
-/* Each view: { render(main, showLoading, seq) }. Steps 4-6 fill the rest in;
-   stubs keep the shell honest meanwhile. seq guards against a slow fetch
-   resolving after the user switched tabs (stale DOM overwrite). */
+/* Each view: { render(main, showLoading, seq) }. seq guards against a slow
+   fetch resolving after the user switched tabs (stale DOM overwrite). */
 const VIEWS = {
   overview: {
     async render(main, showLoading, seq) {
@@ -206,20 +205,20 @@ const VIEWS = {
     },
   },
   digest: {
-    step: 6,
-    render(main) { stub(main, "Digest",
-      "the published digest.md, rendered. Fed by <code>/api/digest</code>."); },
+    async render(main, showLoading, seq) {
+      if (showLoading) main.innerHTML = loadingCard();
+      let d;
+      try {
+        d = await api("/api/digest");
+      } catch (e) {
+        if (seq === state.seq) main.innerHTML = errorCard(e.message);
+        return;
+      }
+      if (seq !== state.seq) return;
+      main.innerHTML = digestViewHTML(d);
+    },
   },
 };
-
-function stub(main, title, body) {
-  main.innerHTML =
-    `<div class="card stub">
-       <h2>${esc(title)}</h2>
-       <p>${body}</p>
-       <p class="dim"><span class="step">step ${VIEWS[state.view].step}</span> brings this view</p>
-     </div>`;
-}
 
 /* ------------------------------------------------------- overview (step 3) */
 
@@ -623,8 +622,98 @@ function eventsHTML(ej, range, typeFilter) {
   </div>`;
 }
 
+/* ------------------------------------------------------- digest (step 6) */
+
+/* Mini renderer for digest.py's constrained plain-text format (NOT general
+   markdown): title, health line, placebo line, ALLCAPS sections with (n),
+   '·' bullets, HIT./MISS. prefixes, fixed-width TRACK RECORD table, footer
+   summaries. Everything is escaped per line before any markup is added. */
+function renderDigest(text) {
+  const out = [];
+  let pre = [];
+  const flushPre = () => {
+    if (pre.length) { out.push(`<pre class="dtable">${pre.map(esc).join("\n")}</pre>`); pre = []; }
+  };
+
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line.trim()) { flushPre(); continue; }
+
+    if (/^DAILY DIGEST/.test(line)) {
+      flushPre(); out.push(`<div class="dtitle">${esc(line)}</div>`); continue;
+    }
+    if (/^pipeline (ok|degraded)/i.test(line)) {
+      flushPre();
+      out.push(`<div class="banner ${/degraded/i.test(line) ? "err" : "ok"}">${esc(line)}</div>`);
+      continue;
+    }
+    if (/^Placebo check:/.test(line)) {
+      flushPre();
+      out.push(`<div class="dplacebo${line.includes("!!") ? " warn-line" : ""}">${esc(line)}</div>`);
+      continue;
+    }
+    // footer summaries: DISMISSED (5): ... / SHADOW: ... / NEEDS YOU: ...
+    if (/^(DISMISSED \(\d+\):|SHADOW:|NEEDS YOU:)/.test(line)) {
+      flushPre(); out.push(`<div class="dfoot">${esc(line)}</div>`); continue;
+    }
+    // bullets, with HIT./MISS. turned into chips
+    if (/^[·\-•]\s/.test(line)) {
+      let body = esc(line.slice(2))
+        .replace(/^HIT\./, `<span class="chip hit">HIT</span>`)
+        .replace(/^MISS\./, `<span class="chip miss">MISS</span>`);
+      out.push(`<div class="dbullet">${body}</div>`);
+      continue;
+    }
+    // ALLCAPS section headers, e.g. "CALLS (3)" or "UNEXPLAINED (2) <- ..."
+    // (greedy caps run; bullets/footers/health were handled above)
+    const hm = line.match(/^([A-Z][A-Z ]{3,})(.*)$/);
+    if (hm) {
+      flushPre();
+      const name = hm[1].trim();
+      const rm = hm[2].match(/^\s*(\(\d+\))?\s*(.*)$/);
+      const count = rm[1] || "", note = rm[2] || "";
+      const cls = name.startsWith("UNEXPLAINED") ? "sec-warn"
+        : name.startsWith("CALLS") ? "sec-ok"
+        : name.startsWith("RESOLVED") ? "sec-info" : "";
+      out.push(`<h3 class="dsec ${cls}">${esc(name)}${count ? ` <span class="num">${esc(count)}</span>` : ""}` +
+               `${note ? `<span class="dim"> ${esc(note)}</span>` : ""}</h3>`);
+      continue;
+    }
+    // fixed-width table rows (2+ space column gaps) -> monospace block
+    if (/\S {2,}\S/.test(line)) { pre.push(line); continue; }
+
+    out.push(`<p class="dline">${esc(line)}</p>`);
+  }
+  flushPre();
+  return out.join("\n");
+}
+
+function digestViewHTML(d) {
+  if (!d || !d.available) {
+    return `<div class="card stub">
+      <h2>Digest</h2>
+      <p>No digest file where serve.py looked for it
+         (<code>--digest</code>, default <code>$DIGEST_OUT</code> or <code>digest.md</code>).</p>
+      <p class="dim">It is the pipeline's published artifact — generate one with
+         <code>python3 run.py digest --out digest.md</code>. The container healthcheck and your
+         external watchdog watch its mtime; this view does too.</p>
+    </div>`;
+  }
+  const stale = d.mtime && (Date.now() / 1000 - d.mtime > 36 * 3600);  // same rule as the Dockerfile healthcheck
+  return `
+  <div class="card digcard">
+    <h2>digest.md
+      <span class="dim num">written ${fmtUTC(d.mtime)} · ${fmtAgo(d.mtime)}</span>
+      ${stale ? `<span class="chip invalid">stale &gt; 36h — watchdog territory</span>`
+              : `<span class="chip active">fresh</span>`}
+    </h2>
+    ${renderDigest(d.text)}
+  </div>`;
+}
+
 /* node smoke hook: render views without a DOM (see tests/ and README) */
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { overviewHTML, verdictBlock, freshnessTable, trackTable, alertsBlock,
-                     feedsViewHTML, anomaliesHTML, ledgerHTML, eventsHTML, outcomeChip, sortBy };
+                     feedsViewHTML, anomaliesHTML, ledgerHTML, eventsHTML, outcomeChip, sortBy,
+                     digestViewHTML, renderDigest };
 }
