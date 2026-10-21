@@ -167,7 +167,7 @@ def q_overview(store: Store) -> dict:
             GROUP BY p.signal_class ORDER BY p.signal_class"""
         if "signal_status" in t:
             track = rows(con, track_sql.format(
-                status_cols=", s.status, s.skill, s.ci_lo, s.ci_hi",
+                status_cols=", s.status, s.skill, s.d_mean, s.ci_lo, s.ci_hi, s.brier, s.brier_ref",
                 status_join="LEFT JOIN signal_status s ON s.signal_class = p.signal_class"))
         else:
             track = rows(con, track_sql.format(status_cols="", status_join=""))
@@ -391,6 +391,19 @@ ROUTES = [
 ]
 
 
+# Static serving: the frontend is a fixed set of flat files in web/. The
+# request path is only ever a DICTIONARY KEY -- it never enters a path
+# expression -- so there is nothing to traverse and nothing to decode
+# (CodeQL: uncontrolled data used in path expression). New files opt in here.
+STATIC_FILES = {
+    "/": "index.html",
+    "/index.html": "index.html",
+    "/style.css": "style.css",
+    "/app.js": "app.js",
+    "/charts.js": "charts.js",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "monitoring-dashboard/1.0"
     store: Store = None                                   # set by make_server
@@ -407,6 +420,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:                            # noqa: BLE001
             self._json(500, {"error": f"{type(e).__name__}: {e}"})
             traceback.print_exc(file=sys.stderr)
+        finally:
+            self._head = False
+
+    def do_HEAD(self):                                    # noqa: N802 (http.server API)
+        # same routing as GET; _send suppresses the body per RFC 9110
+        self._head = True
+        self.do_GET()
 
     def _api(self, path, args):
         for method, rx, fn in ROUTES:
@@ -423,47 +443,42 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": f"no such endpoint: {path}"})
 
     def _static(self, path):
-        if path in ("/", "/index.html"):
-            fp = ROOT / "index.html"
-            if not fp.exists():
-                return self._text(200, "dashboard API is up; frontend lands in step 2\n"
-                                         "try /api/pulse /api/overview /api/feeds")
-        else:
-            rel = path.lstrip("/")
-            if not rel or ".." in rel.split("/"):
-                return self._json(404, {"error": "not found"})
-            fp = (ROOT / rel).resolve()
-            if not str(fp).startswith(str(ROOT.resolve())) or not fp.is_file():
-                return self._json(404, {"error": "not found"})
-        body = fp.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", MIME.get(fp.suffix, "application/octet-stream"))
+        name = STATIC_FILES.get(path)
+        if name is None:
+            return self._json(404, {"error": "not found"})
+        fp = ROOT / name
+        if not fp.is_file():
+            if name == "index.html":
+                return self._text(200, "dashboard API is up; try /api/pulse /api/overview /api/feeds")
+            return self._json(404, {"error": f"{name} is not built yet"})
+        self._send(200, MIME.get(fp.suffix, "application/octet-stream"), fp.read_bytes())
+
+    _head = False
+
+    def _send(self, code, ctype, body):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(body)
+        if not self._head:                 # HEAD gets headers only
+            self.wfile.write(body)
 
     def _json(self, code, obj):
-        body = json.dumps(obj, default=str).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        self._send(code, "application/json; charset=utf-8",
+                   json.dumps(obj, default=str).encode())
 
     def _text(self, code, text):
-        body = text.encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send(code, "text/plain; charset=utf-8", text.encode())
 
     def log_message(self, fmt, *args):                    # quiet the poll spam
-        if "/api/pulse" in (args[0] if args else ""):
+        try:
+            msg = fmt % args
+        except TypeError:                                  # e.g. HTTPStatus args
+            msg = str(args)
+        if "/api/pulse" in msg:
             return
-        sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), fmt % args))
+        sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), msg))
 
 
 class Server(ThreadingHTTPServer):
