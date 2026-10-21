@@ -1,5 +1,7 @@
 # Template for running the monitoring pipeline as a service.
 #   docker compose up -d --build
+# Brings up two services: the pipeline scheduler (`monitoring`) and a
+# read-only web dashboard at http://localhost:8417 (`dashboard`).
 #
 # Works offline-ish out of the box (TRIAGE_LLM=mock; collectors still need
 # network). For real LLM triage set TRIAGE_LLM=anthropic (or openai) and pass
@@ -21,6 +23,26 @@ services:
       # ADSB_QUERIES: "Europe:https://api.adsb.lol/v2/lat/52.5/13.4/250"
     volumes:
       - monitoring-data:/data          # events.db, truth.db, digest.md live here
+
+  # Read-only web dashboard over the same data (web/serve.py). No auth, no
+  # writes: published to localhost only, and the volume is mounted :ro so
+  # even a bug in the server cannot touch the pipeline's databases.
+  dashboard:
+    image: monitoring:latest           # same image compose built for `monitoring`
+    restart: unless-stopped
+    command: python3 web/serve.py --db /data/events.db --digest /data/digest.md --host 0.0.0.0 --port 8417
+    ports:
+      - "127.0.0.1:8417:8417"          # localhost only; exposing LAN-wide is your call
+    volumes:
+      - monitoring-data:/data:ro       # read-only at the docker layer too
+    depends_on:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8417/api/pulse', timeout=5)"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   monitoring-data:

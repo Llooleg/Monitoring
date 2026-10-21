@@ -57,7 +57,9 @@ something broke) are in `run.py`'s docstring.
 Docker: `docker compose up -d --build` (see `docker-compose.yml`). Data lives
 in the `monitoring-data` volume (`/data/events.db`, `/data/truth.db`), the
 digest at `/data/digest.md`, and the container healthcheck fails if the digest
-goes stale. One-shots work too:
+goes stale. The same compose file also starts a **read-only web dashboard**
+(`web/serve.py`) at http://localhost:8417 — no auth, bound to localhost,
+database mounted `:ro`. One-shots work too:
 `docker run --rm monitoring demo --dir /data/demo`.
 
 ## Invariants worth keeping
