@@ -6,6 +6,7 @@ triage.py: the LLM triage agent.
     python triage.py events.db --llm anthropic                # needs ANTHROPIC_API_KEY
     python triage.py events.db --llm openai --limit 5         # needs OPENAI_API_KEY
     python triage.py events.db --anomaly 4412
+    python triage.py events.db --dry-run --limit 200          # noise census: render, write nothing
 
 The system prompt is read live from Plan/triageprompt.md (everything below the
 `---` line) so there is one source of truth; prompt_version is its content
@@ -512,7 +513,8 @@ def computed_independence(con: sqlite3.Connection, evidence: list) -> int:
     return len(origins)
 
 
-def triage_anomaly(con: sqlite3.Connection, client, anomaly_id: int, prompt: str, version: str) -> dict | None:
+def triage_anomaly(con: sqlite3.Connection, client, anomaly_id: int, prompt: str, version: str,
+                   dry_run: bool = False) -> dict | None:
     row = con.execute("SELECT * FROM anomalies WHERE anomaly_id = ?", (anomaly_id,)).fetchone()
     if not row:
         print(f"anomaly {anomaly_id}: not found", file=sys.stderr)
@@ -545,6 +547,11 @@ def triage_anomaly(con: sqlite3.Connection, client, anomaly_id: int, prompt: str
         out = {"verdict": "invalid"}
 
     verdict = out.get("verdict", "invalid")
+    if dry_run:
+        # noise census: the verdict is rendered and returned, but nothing is
+        # written -- no triage_runs row (so the anomaly stays pending for a
+        # real run), no prediction, no ledger footprint at all.
+        return out
     con.execute("INSERT OR REPLACE INTO triage_runs (anomaly_id, verdict, summary, payload, model, "
                 "prompt_version, run_at) VALUES (?,?,?,?,?,?,?)",
                 (anomaly_id, verdict, out.get("summary"), json.dumps(out, default=str),
@@ -600,6 +607,11 @@ def main(argv=None):
     ap.add_argument("--model", help="override TRIAGE_MODEL")
     ap.add_argument("--limit", type=int, default=5)
     ap.add_argument("--anomaly", type=int, help="triage one anomaly by id")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="render verdicts and print the full payload, but write nothing "
+                         "(no triage_runs, no predictions). Anomalies stay pending, so a "
+                         "repeated --dry-run re-triages the same oldest window; raise --limit "
+                         "to sweep everything. The LLM still runs and still costs.")
     args = ap.parse_args(argv)
 
     con = sqlite3.connect(args.db)
@@ -626,10 +638,13 @@ def main(argv=None):
               "anthropic": lambda: AnthropicClient(args.model),
               "openai": lambda: OpenAIClient(args.model)}[args.llm]()
     for aid in ids:
-        out = triage_anomaly(con, client, aid, prompt, version)
+        out = triage_anomaly(con, client, aid, prompt, version, dry_run=args.dry_run)
         if out:
             print(f"anomaly {aid}: {out.get('verdict')}"
-                  + (f" p={out['prediction']['probability']}" if out.get("prediction") else ""))
+                  + (f" p={out['prediction']['probability']}" if out.get("prediction") else "")
+                  + ("  [dry-run: nothing written]" if args.dry_run else ""))
+            if args.dry_run:
+                print(json.dumps(out, default=str))
 
 
 if __name__ == "__main__":

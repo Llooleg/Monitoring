@@ -1,5 +1,7 @@
 """Validator, independence and blinding tests for triage.py."""
+import contextlib
 import datetime as dt
+import io
 import json
 import os
 import sqlite3
@@ -283,6 +285,56 @@ class TestRetriage(unittest.TestCase):
                     os.environ["MON_FAKE_NOW"] = old
             n = sqlite3.connect(db).execute("SELECT COUNT(*) FROM triage_runs").fetchone()[0]
             self.assertEqual(n, 1, "selection must use dbmod.now(), not strftime('now')")
+
+
+class TestDryRun(unittest.TestCase):
+    """--dry-run renders verdicts but writes nothing; the anomaly stays pending."""
+
+    LEDGER_TABLES = ("triage_runs", "predictions", "prediction_evidence", "prompt_miscounts")
+
+    def _counts(self, con):
+        return {t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in self.LEDGER_TABLES}
+
+    def test_dry_run_writes_nothing_and_leaves_pending(self):
+        con = mini_db()
+        dbmod.ensure_one_prediction_per_anomaly(con)
+        client = type("M", (), {"name": "mock"})()
+        prompt, version = triage.load_prompt()
+        out = triage.triage_anomaly(con, client, 7, prompt, version, dry_run=True)
+        self.assertEqual(out["verdict"], "call", "dry-run still renders the verdict")
+        self.assertEqual(self._counts(con), dict.fromkeys(self.LEDGER_TABLES, 0),
+                         "dry-run must leave no ledger footprint")
+        # a real run afterwards still sees the anomaly as pending
+        out2 = triage.triage_anomaly(con, client, 7, prompt, version)
+        self.assertEqual(out2["verdict"], "call")
+        self.assertEqual(self._counts(con)["predictions"], 1)
+
+    def test_cli_dry_run_flag(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = str(Path(td) / "e.db")
+            con = sqlite3.connect(db)
+            con.row_factory = sqlite3.Row
+            con.executescript((ROOT / "SQLSchema" / "schema.sql").read_text())
+            con.executescript(scorer.DDL)
+            con.executescript(triage.DDL)
+            con.execute("INSERT INTO sources (source_id,name,kind,independence_group) "
+                        "VALUES (1,'s1','web','g1')")
+            con.execute("INSERT INTO feeds (feed_id,source_id,metric,cadence_s,label,signal_class) "
+                        "VALUES (1,1,'m',3600,'feed one','test.class')")
+            con.execute("INSERT INTO anomalies (anomaly_id,feed_id,observed_at,detected_at,score,method) "
+                        "VALUES (7,1,?,?,8.0,'median_mad_v1')", (T0, T0))
+            con.commit()
+            con.close()
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                triage.main([db, "--llm", "mock", "--limit", "5", "--dry-run"])
+            self.assertIn("dry-run", buf.getvalue(), "output must say it wrote nothing")
+            self.assertIn('"anomaly_id": 7', buf.getvalue(), "full payload must be printed for diffing")
+            con = sqlite3.connect(db)
+            for t in self.LEDGER_TABLES:
+                self.assertEqual(con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0], 0,
+                                 f"--dry-run must not write {t}")
+            con.close()
 
 
 class TestPrompt(unittest.TestCase):

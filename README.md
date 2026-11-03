@@ -17,7 +17,7 @@ implementation.
 | collectors | `collectors/` | dumb pipes: ADS-B (adsb.lol), BGP (RIPEstat), EDGAR, synthetic |
 | baseline | `MLanalysis/baseline.py` | hour-of-week median/MAD detector, tiered fallbacks, coverage gating, debounce, no-lookahead, `score_cursor` |
 | placebos | `placebo.py` | time-shifted surrogates + tuned synthetic noise, neutral labels |
-| triage agent | `triage.py` | 5 read-only cutoff-bound tools, prompt from `Plan/triageprompt.md`, validator + one retry, miscount logging, code-decided alerts |
+| triage agent | `triage.py` | 5 read-only cutoff-bound tools, prompt from `Plan/triageprompt.md`, validator + one retry, miscount logging, code-decided alerts, `--dry-run` noise census |
 | resolver | `resolve.py` | `resolution_rule` engine (`count_events`, `feed_max`), human queue |
 | scorer | `MLanalysis/scorer.py` | Brier skill vs base rate, cluster bootstrap, shadow↔active state machine |
 | digest | `digest.py` | alert renderer (2/day cap, class cooldown) + daily digest from SQL |

@@ -6,7 +6,7 @@ run.py: wire the pipeline together.
     python run.py collect [--only adsb,bgp,edgar]
     python run.py placebo [--n-shift 2] [--n-noise 1]
     python run.py baseline [--z 5] [--backtest --sweep 3.5,4,5]
-    python run.py triage [--llm mock|anthropic|openai] [--limit 5]
+    python run.py triage [--llm mock|anthropic|openai] [--limit 5] [--dry-run]
     python run.py resolve
     python run.py score                    # MLanalysis/scorer.py
     python run.py digest [--out digest.md]
@@ -95,6 +95,8 @@ def cmd_triage(args):
         argv += ["--model", args.model]
     if args.anomaly:
         argv += ["--anomaly", str(args.anomaly)]
+    if args.dry_run:
+        argv.append("--dry-run")
     triage.main(argv)
 
 
@@ -153,6 +155,8 @@ def main():
     p.add_argument("--model")
     p.add_argument("--limit", type=int, default=5)
     p.add_argument("--anomaly", type=int)
+    p.add_argument("--dry-run", action="store_true",
+                   help="render triage output without writing to the ledger (noise census)")
     p.set_defaults(fn=cmd_triage)
 
     sub.add_parser("resolve").set_defaults(fn=cmd_resolve)
